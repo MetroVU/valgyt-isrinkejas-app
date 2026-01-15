@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { Restaurant, getAllRestaurants, getRestaurantById, getAllCuisines, Selection, SessionData } from '@/lib/data';
+import { Restaurant, getAllRestaurants, getRestaurantById, getAllCuisines, getRestaurantsForIds, addCustomRestaurantsFromShared, Selection, SessionData } from '@/lib/data';
 import { getSessionByDate, saveSession, createSession, findMatches, pickRandom } from '@/lib/storage';
 import RestaurantCard from '@/components/RestaurantCard';
 import DatePicker from '@/components/DatePicker';
@@ -14,18 +14,96 @@ import AddRestaurantModal from '@/components/AddRestaurantModal';
 type Step = 'date' | 'person' | 'select' | 'orders' | 'waiting' | 'results';
 type SortOption = 'name' | 'rating' | 'price-low' | 'price-high';
 
-// Helper to encode/decode selections to URL-safe string
-const encodeSelections = (restaurants: string[], orders: { [key: string]: string }) => {
-  const data = { r: restaurants, o: orders };
+const STATE_KEY = 'food-picker-current-state';
+
+// Helper to encode/decode selections to URL-safe string (including custom restaurant data)
+const encodeSelections = (restaurants: string[], orders: { [key: string]: string }, customRestaurants: Restaurant[]) => {
+  const data = { r: restaurants, o: orders, c: customRestaurants };
   return btoa(encodeURIComponent(JSON.stringify(data)));
 };
 
-const decodeSelections = (encoded: string): { restaurants: string[], orders: { [key: string]: string } } | null => {
+const decodeSelections = (encoded: string): { restaurants: string[], orders: { [key: string]: string }, customRestaurants: Restaurant[] } | null => {
   try {
     const data = JSON.parse(decodeURIComponent(atob(encoded)));
-    return { restaurants: data.r || [], orders: data.o || {} };
+    return { 
+      restaurants: data.r || [], 
+      orders: data.o || {},
+      customRestaurants: data.c || []
+    };
   } catch {
     return null;
+  }
+};
+
+// Encode full results (both people's selections) for sharing
+const encodeResults = (session: SessionData, customRestaurants: Restaurant[]) => {
+  const data = {
+    d: session.date,
+    p1: session.person1 ? { r: session.person1.restaurants, o: session.person1.orders } : null,
+    p2: session.person2 ? { r: session.person2.restaurants, o: session.person2.orders } : null,
+    c: customRestaurants,
+  };
+  return btoa(encodeURIComponent(JSON.stringify(data)));
+};
+
+const decodeResults = (encoded: string): {
+  date: string;
+  person1: { restaurants: string[], orders: { [key: string]: string } } | null;
+  person2: { restaurants: string[], orders: { [key: string]: string } } | null;
+  customRestaurants: Restaurant[];
+} | null => {
+  try {
+    const data = JSON.parse(decodeURIComponent(atob(encoded)));
+    return {
+      date: data.d || '',
+      person1: data.p1 ? { restaurants: data.p1.r || [], orders: data.p1.o || {} } : null,
+      person2: data.p2 ? { restaurants: data.p2.r || [], orders: data.p2.o || {} } : null,
+      customRestaurants: data.c || [],
+    };
+  } catch {
+    return null;
+  }
+};
+
+// Save current state to localStorage
+const saveCurrentState = (state: {
+  step: Step;
+  selectedDate: string;
+  currentPerson: 'person1' | 'person2' | null;
+  selectedRestaurants: string[];
+  orders: { [key: string]: string };
+  shareableLink: string;
+  resultsLink: string;
+}) => {
+  if (typeof window !== 'undefined') {
+    localStorage.setItem(STATE_KEY, JSON.stringify(state));
+  }
+};
+
+// Load current state from localStorage
+const loadCurrentState = (): {
+  step: Step;
+  selectedDate: string;
+  currentPerson: 'person1' | 'person2' | null;
+  selectedRestaurants: string[];
+  orders: { [key: string]: string };
+  shareableLink: string;
+  resultsLink: string;
+} | null => {
+  if (typeof window === 'undefined') return null;
+  const data = localStorage.getItem(STATE_KEY);
+  if (!data) return null;
+  try {
+    return JSON.parse(data);
+  } catch {
+    return null;
+  }
+};
+
+// Clear saved state
+const clearCurrentState = () => {
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem(STATE_KEY);
   }
 };
 
@@ -46,8 +124,10 @@ export default function Home() {
   const [cuisineFilter, setCuisineFilter] = useState<string>('all');
   const [showFilters, setShowFilters] = useState(false);
   const [shareableLink, setShareableLink] = useState<string>('');
+  const [resultsLink, setResultsLink] = useState<string>('');
   const [person1FromUrl, setPerson1FromUrl] = useState<{ restaurants: string[], orders: { [key: string]: string } } | null>(null);
   const [copied, setCopied] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
   // Get unique cuisines
   const cuisines = useMemo(() => getAllCuisines(), [allRestaurants]);
@@ -57,19 +137,81 @@ export default function Home() {
     setAllRestaurants(getAllRestaurants());
   }, [showAddModal]); // Refresh when modal closes
 
-  // Check URL parameters on load
+  // Check URL parameters and saved state on load
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const dateParam = params.get('d');
       const person1Data = params.get('p1');
+      const resultsData = params.get('results');
+      
+      if (resultsData) {
+        // Someone is opening results link - show results directly
+        const decoded = decodeResults(resultsData);
+        if (decoded) {
+          // Add any custom restaurants from the shared data
+          if (decoded.customRestaurants && decoded.customRestaurants.length > 0) {
+            addCustomRestaurantsFromShared(decoded.customRestaurants);
+            setAllRestaurants(getAllRestaurants());
+          }
+          
+          // Build session from results data
+          const resultsSession: SessionData = {
+            id: `session-${decoded.date}`,
+            date: decoded.date,
+            person1: decoded.person1 ? {
+              oderId: 'person1-results',
+              date: decoded.date,
+              person: 'person1',
+              restaurants: decoded.person1.restaurants,
+              orders: decoded.person1.orders,
+              submitted: true,
+            } : null,
+            person2: decoded.person2 ? {
+              oderId: 'person2-results',
+              date: decoded.date,
+              person: 'person2',
+              restaurants: decoded.person2.restaurants,
+              orders: decoded.person2.orders,
+              submitted: true,
+            } : null,
+            result: null,
+          };
+          
+          // Calculate matches
+          const matches = findMatches(resultsSession);
+          resultsSession.result = {
+            matches,
+            winner: matches.length === 1 ? matches[0] : null,
+            method: matches.length === 1 ? 'match' : null,
+          };
+          
+          setSelectedDate(decoded.date);
+          setSession(resultsSession);
+          saveSession(resultsSession);
+          setStep('results');
+          
+          // Clear URL params
+          window.history.replaceState({}, '', window.location.pathname);
+          setIsLoading(false);
+          return;
+        }
+      }
       
       if (dateParam && person1Data) {
         // Person 2 is opening the link from Person 1
-        setSelectedDate(dateParam);
         const decoded = decodeSelections(person1Data);
         if (decoded) {
-          setPerson1FromUrl(decoded);
+          // Add any custom restaurants from the shared data
+          if (decoded.customRestaurants && decoded.customRestaurants.length > 0) {
+            addCustomRestaurantsFromShared(decoded.customRestaurants);
+            // Refresh restaurant list after adding custom restaurants
+            setAllRestaurants(getAllRestaurants());
+          }
+          
+          setSelectedDate(dateParam);
+          setPerson1FromUrl({ restaurants: decoded.restaurants, orders: decoded.orders });
+          
           // Create session with person1's data already filled
           const newSession: SessionData = {
             id: `session-${dateParam}`,
@@ -88,10 +230,49 @@ export default function Home() {
           setSession(newSession);
           setCurrentPerson('person2');
           setStep('select');
+          
+          // Clear URL params after loading (cleaner URL)
+          window.history.replaceState({}, '', window.location.pathname);
+        }
+      } else {
+        // No URL params - check for saved state
+        const savedState = loadCurrentState();
+        if (savedState) {
+          setStep(savedState.step);
+          setSelectedDate(savedState.selectedDate);
+          setCurrentPerson(savedState.currentPerson);
+          setSelectedRestaurants(savedState.selectedRestaurants);
+          setOrders(savedState.orders);
+          setShareableLink(savedState.shareableLink || '');
+          setResultsLink(savedState.resultsLink || '');
+          
+          // Load session for this date
+          if (savedState.selectedDate) {
+            const existingSession = getSessionByDate(savedState.selectedDate);
+            if (existingSession) {
+              setSession(existingSession);
+            }
+          }
         }
       }
+      setIsLoading(false);
     }
   }, []);
+
+  // Save state whenever important values change
+  useEffect(() => {
+    if (!isLoading && step !== 'date') {
+      saveCurrentState({
+        step,
+        selectedDate,
+        currentPerson,
+        selectedRestaurants,
+        orders,
+        shareableLink,
+        resultsLink,
+      });
+    }
+  }, [step, selectedDate, currentPerson, selectedRestaurants, orders, shareableLink, resultsLink, isLoading]);
 
   // Load session when date changes (only if not loaded from URL)
   useEffect(() => {
@@ -197,7 +378,11 @@ export default function Home() {
 
     if (currentPerson === 'person1') {
       // Person 1 submitting - generate shareable link
-      const encoded = encodeSelections(selectedRestaurants, orders);
+      // Include any custom restaurants that were selected
+      const selectedCustomRestaurants = getRestaurantsForIds(selectedRestaurants)
+        .filter(r => r.platform === 'custom');
+      
+      const encoded = encodeSelections(selectedRestaurants, orders, selectedCustomRestaurants);
       const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
       const link = `${baseUrl}?d=${selectedDate}&p1=${encoded}`;
       setShareableLink(link);
@@ -224,22 +409,36 @@ export default function Home() {
         method: matches.length === 1 ? 'match' : null,
       };
       
+      // Generate results link for sharing with Person 1
+      const allSelectedIds = [
+        ...(updatedSession.person1?.restaurants || []),
+        ...selectedRestaurants,
+      ];
+      const allCustomRestaurants = getRestaurantsForIds(allSelectedIds)
+        .filter(r => r.platform === 'custom');
+      
+      const resultsEncoded = encodeResults(updatedSession, allCustomRestaurants);
+      const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
+      const newResultsLink = `${baseUrl}?results=${resultsEncoded}`;
+      setResultsLink(newResultsLink);
+      
       saveSession(updatedSession);
       setSession(updatedSession);
       setStep('results');
     }
   };
 
-  const handleCopyLink = async () => {
-    if (shareableLink) {
+  const handleCopyLink = async (linkToCopy?: string) => {
+    const link = linkToCopy || shareableLink || resultsLink;
+    if (link) {
       try {
-        await navigator.clipboard.writeText(shareableLink);
+        await navigator.clipboard.writeText(link);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
       } catch {
         // Fallback for older browsers
         const textArea = document.createElement('textarea');
-        textArea.value = shareableLink;
+        textArea.value = link;
         document.body.appendChild(textArea);
         textArea.select();
         document.execCommand('copy');
@@ -250,19 +449,20 @@ export default function Home() {
     }
   };
 
-  const handleShareLink = async () => {
-    if (shareableLink && navigator.share) {
+  const handleShareLink = async (linkToShare?: string) => {
+    const link = linkToShare || shareableLink || resultsLink;
+    if (link && navigator.share) {
       try {
         await navigator.share({
           title: 'Kur Valgom? 🍕',
-          text: 'Pasirink kur valgysim kartu!',
-          url: shareableLink,
+          text: resultsLink ? 'Štai mūsų rezultatai!' : 'Pasirink kur valgysim kartu!',
+          url: link,
         });
       } catch {
         // User cancelled or share failed
       }
     } else {
-      handleCopyLink();
+      handleCopyLink(link);
     }
   };
 
@@ -345,6 +545,10 @@ export default function Home() {
     setSession(null);
     setPlatformFilter('all');
     setSearchQuery('');
+    setShareableLink('');
+    setResultsLink('');
+    setPerson1FromUrl(null);
+    clearCurrentState(); // Clear saved state from localStorage
   };
 
   const handleAddRestaurant = (restaurant: Restaurant) => {
@@ -409,6 +613,18 @@ export default function Home() {
     return result;
   }, [allRestaurants, platformFilter, cuisineFilter, searchQuery, sortBy]);
 
+  // Show loading state while checking URL/localStorage
+  if (isLoading) {
+    return (
+      <main className="min-h-screen p-4 md:p-8 flex items-center justify-center">
+        <div className="text-center">
+          <div className="text-6xl animate-bounce-slow mb-4">🍕</div>
+          <p className="text-gray-400">Kraunama...</p>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-screen p-4 md:p-8">
       <div className="max-w-6xl mx-auto">
@@ -469,10 +685,23 @@ export default function Home() {
           <div className="space-y-4 md:space-y-6">
             {/* Info banner when person2 is selecting from URL */}
             {currentPerson === 'person2' && person1FromUrl && (
-              <div className="bg-gradient-to-r from-blue-600/20 to-indigo-600/20 border border-blue-500/30 rounded-xl p-4 text-center">
-                <p className="text-blue-300">
-                  👨 Jis jau pasirinko savo 3 vietas! Dabar tavo eilė pasirinkti.
+              <div className="bg-gradient-to-r from-blue-600/20 to-indigo-600/20 border border-blue-500/30 rounded-xl p-4">
+                <p className="text-blue-300 text-center mb-3">
+                  👨 Jis jau pasirinko! Dabar tavo eilė.
                 </p>
+                <div className="flex flex-wrap justify-center gap-2">
+                  {person1FromUrl.restaurants.map(id => {
+                    const r = getRestaurantById(id);
+                    return r ? (
+                      <span 
+                        key={id}
+                        className="px-3 py-1.5 bg-blue-600/30 border border-blue-500/50 rounded-full text-sm flex items-center gap-1"
+                      >
+                        {r.image} {r.name}
+                      </span>
+                    ) : null;
+                  })}
+                </div>
               </div>
             )}
             
@@ -839,7 +1068,7 @@ export default function Home() {
               </div>
               <div className="flex gap-2">
                 <button
-                  onClick={handleCopyLink}
+                  onClick={() => handleCopyLink()}
                   className={`flex-1 py-3 rounded-xl font-bold transition-all active:scale-95 ${
                     copied 
                       ? 'bg-green-500 text-white' 
@@ -849,7 +1078,7 @@ export default function Home() {
                   {copied ? '✓ Nukopijuota!' : '📋 Kopijuoti'}
                 </button>
                 <button
-                  onClick={handleShareLink}
+                  onClick={() => handleShareLink()}
                   className="flex-1 py-3 rounded-xl bg-gradient-to-r from-pink-500 to-purple-500 text-white font-bold hover:scale-105 active:scale-95 transition-all"
                 >
                   📤 Dalintis
@@ -886,6 +1115,8 @@ export default function Home() {
               onSpinWheel={handleSpinWheel}
               onPickFromMatches={handlePickFromMatches}
               onReset={handleReset}
+              resultsLink={resultsLink}
+              onShareResults={resultsLink ? () => handleShareLink(resultsLink) : undefined}
             />
             {showWheel && (
               <SpinWheel

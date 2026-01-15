@@ -1130,8 +1130,20 @@ export function getCustomRestaurants(): Restaurant[] {
 
 export function saveCustomRestaurant(restaurant: Restaurant): void {
   const customs = getCustomRestaurants();
-  customs.push(restaurant);
-  localStorage.setItem(CUSTOM_RESTAURANTS_KEY, JSON.stringify(customs));
+  // Don't add duplicates
+  if (!customs.find(r => r.id === restaurant.id)) {
+    customs.push(restaurant);
+    localStorage.setItem(CUSTOM_RESTAURANTS_KEY, JSON.stringify(customs));
+  }
+}
+
+export function addCustomRestaurantsFromShared(sharedRestaurants: Restaurant[]): void {
+  // Add shared custom restaurants to local storage if they don't exist
+  sharedRestaurants.forEach(r => {
+    if (r.platform === 'custom') {
+      saveCustomRestaurant(r);
+    }
+  });
 }
 
 export function getAllRestaurants(): Restaurant[] {
@@ -1140,6 +1152,12 @@ export function getAllRestaurants(): Restaurant[] {
 
 export function getRestaurantById(id: string): Restaurant | undefined {
   return getAllRestaurants().find(r => r.id === id);
+}
+
+// Get full restaurant data for selected IDs (including custom restaurants)
+export function getRestaurantsForIds(ids: string[]): Restaurant[] {
+  const allRests = getAllRestaurants();
+  return ids.map(id => allRests.find(r => r.id === id)).filter(Boolean) as Restaurant[];
 }
 
 export function getRestaurantsByPlatform(platform: 'bolt' | 'wolt' | 'custom'): Restaurant[] {
