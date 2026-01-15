@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { put, del } from '@vercel/blob';
 
-// In-memory store for sessions (works locally and on Vercel serverless)
-// Note: On Vercel, sessions will persist during warm lambda instances
-// For production with multiple users, use Vercel Blob by setting BLOB_READ_WRITE_TOKEN
-const sessions = new Map<string, any>();
+// Session data structure
+interface Session {
+  code: string;
+  person1?: string[];
+  person2?: string[];
+  createdAt: number;
+  blobUrl?: string;
+}
 
 // Generate a random 6-character code
 function generateCode(): string {
@@ -15,188 +20,189 @@ function generateCode(): string {
   return code;
 }
 
-// Check if Blob is configured
-const useBlobStorage = () => {
-  return !!process.env.BLOB_READ_WRITE_TOKEN;
-};
-
-// Blob storage functions (only used if configured)
-async function blobPut(key: string, data: any) {
-  const { put } = await import('@vercel/blob');
-  const result = await put(key, JSON.stringify(data), {
-    access: 'public',
-    addRandomSuffix: false,
-  });
-  console.log('Blob put result:', result.url);
-  return result;
-}
-
-async function blobGet(key: string) {
-  try {
-    const { list } = await import('@vercel/blob');
-    const { blobs } = await list({ prefix: key });
-    
-    console.log('Blob list result for', key, ':', blobs.length, 'blobs found');
-    
-    if (blobs.length === 0) return null;
-    
-    const response = await fetch(blobs[0].url, { cache: 'no-store' });
-    if (!response.ok) {
-      console.log('Blob fetch failed:', response.status);
-      return null;
-    }
-    
-    return response.json();
-  } catch (error) {
-    console.error('blobGet error:', error);
-    return null;
-  }
-}
-
-async function blobDelete(key: string) {
-  const { del, list } = await import('@vercel/blob');
-  const { blobs } = await list({ prefix: key });
-  
-  if (blobs.length > 0) {
-    await del(blobs[0].url);
-  }
-}
+// In-memory URL mapping (will be replaced by actual lookup)
+const urlMap = new Map<string, string>();
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action, code, person, selections, customRestaurants } = body;
-    const useBlob = useBlobStorage();
-    
-    console.log('API called:', { action, code, person, useBlob });
+    const { action, code, selections, role } = body;
+
+    console.log('API called with action:', action, 'code:', code);
 
     if (action === 'create') {
-      const sessionCode = generateCode();
-      const sessionData = {
-        code: sessionCode,
+      // Create new session
+      const newCode = generateCode();
+      const session: Session = {
+        code: newCode,
         createdAt: Date.now(),
-        person1: null,
-        person2: null,
-        customRestaurants: [],
       };
 
-      if (useBlob) {
-        try {
-          await blobPut(`sessions/${sessionCode}.json`, sessionData);
-          console.log('Session created in blob:', sessionCode);
-        } catch (blobError) {
-          console.error('Blob put error:', blobError);
-          throw blobError;
-        }
-      } else {
-        sessions.set(sessionCode, sessionData);
-        console.log('Session created in memory:', sessionCode);
-      }
+      const blob = await put(`sessions/${newCode}.json`, JSON.stringify(session), {
+        access: 'public',
+        contentType: 'application/json',
+        addRandomSuffix: false,
+      });
 
-      return NextResponse.json({ success: true, code: sessionCode });
+      console.log('Created session, blob URL:', blob.url);
+
+      return NextResponse.json({ 
+        success: true, 
+        code: newCode,
+        blobUrl: blob.url 
+      });
     }
 
-    if (action === 'join' || action === 'get') {
-      let sessionData = null;
-      
-      if (useBlob) {
-        sessionData = await blobGet(`sessions/${code}.json`);
-      } else {
-        sessionData = sessions.get(code);
+    if (action === 'join') {
+      // Try to find the session by listing blobs
+      const response = await fetch(
+        `https://blob.vercel-storage.com?prefix=sessions/${code}.json`,
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.BLOB_READ_WRITE_TOKEN}`,
+          },
+        }
+      );
+
+      if (!response.ok) {
+        console.log('List request failed:', response.status);
+        return NextResponse.json({ success: false, error: 'Sesija nerasta' });
       }
-      
-      if (!sessionData) {
-        return NextResponse.json({ success: false, error: 'Session not found' });
+
+      const data = await response.json();
+      console.log('List response:', JSON.stringify(data));
+
+      if (!data.blobs || data.blobs.length === 0) {
+        return NextResponse.json({ success: false, error: 'Sesija nerasta' });
       }
-      
-      if (action === 'join') {
-        return NextResponse.json({ success: true, exists: true });
-      }
-      
-      return NextResponse.json({ success: true, session: sessionData });
+
+      // Get the session data
+      const blobUrl = data.blobs[0].url;
+      const sessionResponse = await fetch(blobUrl);
+      const session = await sessionResponse.json();
+
+      return NextResponse.json({ 
+        success: true, 
+        session,
+        blobUrl 
+      });
     }
 
     if (action === 'submit') {
-      let sessionData = null;
-      
-      console.log('Submit action for code:', code, 'person:', person);
-      
-      if (useBlob) {
+      // First, get the current session
+      const listResponse = await fetch(
+        `https://blob.vercel-storage.com?prefix=sessions/${code}.json`,
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.BLOB_READ_WRITE_TOKEN}`,
+          },
+        }
+      );
+
+      if (!listResponse.ok) {
+        console.log('List failed on submit:', listResponse.status);
+        return NextResponse.json({ success: false, error: 'Sesija nerasta' });
+      }
+
+      const listData = await listResponse.json();
+      console.log('Submit list response:', JSON.stringify(listData));
+
+      let session: Session;
+      let oldBlobUrl: string | undefined;
+
+      if (listData.blobs && listData.blobs.length > 0) {
+        oldBlobUrl = listData.blobs[0].url;
+        const sessionResponse = await fetch(oldBlobUrl);
+        session = await sessionResponse.json();
+      } else {
+        return NextResponse.json({ success: false, error: 'Sesija nerasta' });
+      }
+
+      // Update session with selections
+      if (role === 'person1') {
+        session.person1 = selections;
+      } else {
+        session.person2 = selections;
+      }
+
+      // Delete old blob and create new one
+      if (oldBlobUrl) {
         try {
-          sessionData = await blobGet(`sessions/${code}.json`);
-          console.log('Got session from blob:', sessionData ? 'found' : 'not found');
-        } catch (getError) {
-          console.error('Blob get error:', getError);
-          return NextResponse.json({ success: false, error: 'Failed to get session' });
-        }
-      } else {
-        sessionData = sessions.get(code);
-        console.log('Got session from memory:', sessionData ? 'found' : 'not found');
-      }
-      
-      if (!sessionData) {
-        console.log('Session not found for code:', code);
-        return NextResponse.json({ success: false, error: 'Session not found' });
-      }
-
-      // Update the appropriate person's selections
-      if (person === 1) {
-        sessionData.person1 = {
-          selections,
-          submittedAt: Date.now(),
-        };
-        if (customRestaurants && customRestaurants.length > 0) {
-          sessionData.customRestaurants = [
-            ...(sessionData.customRestaurants || []),
-            ...customRestaurants.filter((cr: any) => 
-              !sessionData.customRestaurants?.some((existing: any) => existing.id === cr.id)
-            ),
-          ];
-        }
-      } else {
-        sessionData.person2 = {
-          selections,
-          submittedAt: Date.now(),
-        };
-        if (customRestaurants && customRestaurants.length > 0) {
-          sessionData.customRestaurants = [
-            ...(sessionData.customRestaurants || []),
-            ...customRestaurants.filter((cr: any) => 
-              !sessionData.customRestaurants?.some((existing: any) => existing.id === cr.id)
-            ),
-          ];
+          await del(oldBlobUrl);
+        } catch (e) {
+          console.log('Delete failed, continuing anyway');
         }
       }
 
-      // Save updated session
-      if (useBlob) {
-        try {
-          await blobPut(`sessions/${code}.json`, sessionData);
-          console.log('Session saved to blob');
-        } catch (putError) {
-          console.error('Blob put error on submit:', putError);
-          return NextResponse.json({ success: false, error: 'Failed to save session' });
+      const blob = await put(`sessions/${code}.json`, JSON.stringify(session), {
+        access: 'public',
+        contentType: 'application/json',
+        addRandomSuffix: false,
+      });
+
+      console.log('Updated session:', JSON.stringify(session));
+
+      return NextResponse.json({ 
+        success: true, 
+        session,
+        blobUrl: blob.url 
+      });
+    }
+
+    if (action === 'get') {
+      const listResponse = await fetch(
+        `https://blob.vercel-storage.com?prefix=sessions/${code}.json`,
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.BLOB_READ_WRITE_TOKEN}`,
+          },
         }
-      } else {
-        sessions.set(code, sessionData);
-        console.log('Session saved to memory');
+      );
+
+      if (!listResponse.ok) {
+        return NextResponse.json({ success: false, error: 'Sesija nerasta' });
       }
 
-      return NextResponse.json({ success: true });
+      const listData = await listResponse.json();
+
+      if (!listData.blobs || listData.blobs.length === 0) {
+        return NextResponse.json({ success: false, error: 'Sesija nerasta' });
+      }
+
+      const blobUrl = listData.blobs[0].url;
+      const sessionResponse = await fetch(blobUrl);
+      const session = await sessionResponse.json();
+
+      return NextResponse.json({ success: true, session });
     }
 
     if (action === 'delete') {
-      if (useBlob) {
-        await blobDelete(`sessions/${code}.json`);
-      } else {
-        sessions.delete(code);
+      const listResponse = await fetch(
+        `https://blob.vercel-storage.com?prefix=sessions/${code}.json`,
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.BLOB_READ_WRITE_TOKEN}`,
+          },
+        }
+      );
+
+      if (listResponse.ok) {
+        const listData = await listResponse.json();
+        if (listData.blobs && listData.blobs.length > 0) {
+          await del(listData.blobs[0].url);
+        }
       }
+
       return NextResponse.json({ success: true });
     }
 
     return NextResponse.json({ success: false, error: 'Invalid action' });
+
   } catch (error) {
     console.error('Session API error:', error);
-    return NextResponse.json({ success: false, error: 'Server error' }, { status: 500 });
+    return NextResponse.json({ 
+      success: false, 
+      error: error instanceof Error ? error.message : 'Server error' 
+    });
   }
 }
