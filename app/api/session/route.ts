@@ -138,6 +138,7 @@ export async function POST(request: NextRequest) {
         access: 'public',
         contentType: 'application/json',
         addRandomSuffix: false,
+        allowOverwrite: true,
       });
 
       console.log('Updated session:', JSON.stringify(session));
