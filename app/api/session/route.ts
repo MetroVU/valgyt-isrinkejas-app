@@ -1,9 +1,13 @@
-import { put, head, del } from '@vercel/blob';
 import { NextRequest, NextResponse } from 'next/server';
+
+// In-memory store for sessions (works locally and on Vercel serverless)
+// Note: On Vercel, sessions will persist during warm lambda instances
+// For production with multiple users, use Vercel Blob by setting BLOB_READ_WRITE_TOKEN
+const sessions = new Map<string, any>();
 
 // Generate a random 6-character code
 function generateCode(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // No confusing characters
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let code = '';
   for (let i = 0; i < 6; i++) {
     code += chars[Math.floor(Math.random() * chars.length)];
@@ -11,13 +15,48 @@ function generateCode(): string {
   return code;
 }
 
+// Check if Blob is configured
+const useBlobStorage = () => {
+  return !!process.env.BLOB_READ_WRITE_TOKEN;
+};
+
+// Blob storage functions (only used if configured)
+async function blobPut(key: string, data: any) {
+  const { put } = await import('@vercel/blob');
+  await put(key, JSON.stringify(data), {
+    access: 'public',
+    addRandomSuffix: false,
+  });
+}
+
+async function blobGet(key: string) {
+  const { list } = await import('@vercel/blob');
+  const { blobs } = await list({ prefix: key });
+  
+  if (blobs.length === 0) return null;
+  
+  const response = await fetch(blobs[0].url, { cache: 'no-store' });
+  if (!response.ok) return null;
+  
+  return response.json();
+}
+
+async function blobDelete(key: string) {
+  const { del, list } = await import('@vercel/blob');
+  const { blobs } = await list({ prefix: key });
+  
+  if (blobs.length > 0) {
+    await del(blobs[0].url);
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { action, code, person, selections, customRestaurants } = body;
+    const useBlob = useBlobStorage();
 
     if (action === 'create') {
-      // Create new session
       const sessionCode = generateCode();
       const sessionData = {
         code: sessionCode,
@@ -27,50 +66,59 @@ export async function POST(request: NextRequest) {
         customRestaurants: [],
       };
 
-      await put(`sessions/${sessionCode}.json`, JSON.stringify(sessionData), {
-        access: 'public',
-        addRandomSuffix: false,
-      });
+      if (useBlob) {
+        await blobPut(`sessions/${sessionCode}.json`, sessionData);
+      } else {
+        sessions.set(sessionCode, sessionData);
+      }
 
       return NextResponse.json({ success: true, code: sessionCode });
     }
 
-    if (action === 'join') {
-      // Check if session exists
-      try {
-        const blob = await head(`sessions/${code}.json`);
-        if (blob) {
-          return NextResponse.json({ success: true, exists: true });
-        }
-      } catch {
+    if (action === 'join' || action === 'get') {
+      let sessionData = null;
+      
+      if (useBlob) {
+        sessionData = await blobGet(`sessions/${code}.json`);
+      } else {
+        sessionData = sessions.get(code);
+      }
+      
+      if (!sessionData) {
         return NextResponse.json({ success: false, error: 'Session not found' });
       }
+      
+      if (action === 'join') {
+        return NextResponse.json({ success: true, exists: true });
+      }
+      
+      return NextResponse.json({ success: true, session: sessionData });
     }
 
     if (action === 'submit') {
-      // Submit selections for a person
-      const blobUrl = `${process.env.BLOB_URL || 'https://blob.vercel-storage.com'}/sessions/${code}.json`;
+      let sessionData = null;
       
-      // Fetch current session data
-      const response = await fetch(blobUrl, { cache: 'no-store' });
-      if (!response.ok) {
-        return NextResponse.json({ success: false, error: 'Session not found' });
+      if (useBlob) {
+        sessionData = await blobGet(`sessions/${code}.json`);
+      } else {
+        sessionData = sessions.get(code);
       }
       
-      const sessionData = await response.json();
-      
+      if (!sessionData) {
+        return NextResponse.json({ success: false, error: 'Session not found' });
+      }
+
       // Update the appropriate person's selections
       if (person === 1) {
         sessionData.person1 = {
           selections,
           submittedAt: Date.now(),
         };
-        // Add custom restaurants if provided
         if (customRestaurants && customRestaurants.length > 0) {
           sessionData.customRestaurants = [
-            ...sessionData.customRestaurants,
+            ...(sessionData.customRestaurants || []),
             ...customRestaurants.filter((cr: any) => 
-              !sessionData.customRestaurants.some((existing: any) => existing.id === cr.id)
+              !sessionData.customRestaurants?.some((existing: any) => existing.id === cr.id)
             ),
           ];
         }
@@ -81,44 +129,31 @@ export async function POST(request: NextRequest) {
         };
         if (customRestaurants && customRestaurants.length > 0) {
           sessionData.customRestaurants = [
-            ...sessionData.customRestaurants,
+            ...(sessionData.customRestaurants || []),
             ...customRestaurants.filter((cr: any) => 
-              !sessionData.customRestaurants.some((existing: any) => existing.id === cr.id)
+              !sessionData.customRestaurants?.some((existing: any) => existing.id === cr.id)
             ),
           ];
         }
       }
 
       // Save updated session
-      await put(`sessions/${code}.json`, JSON.stringify(sessionData), {
-        access: 'public',
-        addRandomSuffix: false,
-      });
+      if (useBlob) {
+        await blobPut(`sessions/${code}.json`, sessionData);
+      } else {
+        sessions.set(code, sessionData);
+      }
 
       return NextResponse.json({ success: true });
     }
 
-    if (action === 'get') {
-      // Get session data
-      const blobUrl = `${process.env.BLOB_URL || 'https://blob.vercel-storage.com'}/sessions/${code}.json`;
-      
-      const response = await fetch(blobUrl, { cache: 'no-store' });
-      if (!response.ok) {
-        return NextResponse.json({ success: false, error: 'Session not found' });
-      }
-      
-      const sessionData = await response.json();
-      return NextResponse.json({ success: true, session: sessionData });
-    }
-
     if (action === 'delete') {
-      // Delete session
-      try {
-        await del(`sessions/${code}.json`);
-        return NextResponse.json({ success: true });
-      } catch {
-        return NextResponse.json({ success: false, error: 'Failed to delete' });
+      if (useBlob) {
+        await blobDelete(`sessions/${code}.json`);
+      } else {
+        sessions.delete(code);
       }
+      return NextResponse.json({ success: true });
     }
 
     return NextResponse.json({ success: false, error: 'Invalid action' });
