@@ -2,19 +2,17 @@
 
 import { SessionData, getRestaurantById, Restaurant } from '@/lib/data';
 import { useState, useEffect } from 'react';
+
 interface ResultsViewProps {
   session: SessionData;
   onPickRandom: () => void;
   onSpinWheel: () => void;
   onPickFromMatches: () => void;
   onReset: () => void;
-  resultsLink?: string;
-  onShareResults?: () => void;
 }
 
-export default function ResultsView({ session, onPickRandom, onSpinWheel, onPickFromMatches, onReset, resultsLink, onShareResults }: ResultsViewProps) {
+export default function ResultsView({ session, onPickRandom, onSpinWheel, onPickFromMatches, onReset }: ResultsViewProps) {
   const [showConfetti, setShowConfetti] = useState(false);
-  const [copied, setCopied] = useState(false);
   
   const matches = session.result?.matches || [];
   const winner = session.result?.winner;
@@ -27,18 +25,6 @@ export default function ResultsView({ session, onPickRandom, onSpinWheel, onPick
       return () => clearTimeout(timer);
     }
   }, [winner]);
-
-  const handleCopyResults = async () => {
-    if (resultsLink) {
-      try {
-        await navigator.clipboard.writeText(resultsLink);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      } catch {
-        // Fallback
-      }
-    }
-  };
 
   const person1Restaurants: (Restaurant | undefined)[] = session.person1?.restaurants.map((id: string) => getRestaurantById(id)) || [];
   const person2Restaurants: (Restaurant | undefined)[] = session.person2?.restaurants.map((id: string) => getRestaurantById(id)) || [];
@@ -232,35 +218,6 @@ export default function ResultsView({ session, onPickRandom, onSpinWheel, onPick
               <div className="font-bold">Laimės ratas</div>
               <div className="text-sm opacity-80">Sukti ratą!</div>
             </button>
-          </div>
-        </div>
-      )}
-
-      {/* Share results link */}
-      {resultsLink && (
-        <div className="bg-gradient-to-r from-purple-600/20 to-pink-600/20 border border-purple-500/30 rounded-xl p-4">
-          <h3 className="font-bold mb-3 text-center">📤 Pasidalink rezultatais</h3>
-          <p className="text-sm text-gray-400 text-center mb-3">
-            Siųsk šią nuorodą, kad abu matytumėte rezultatus!
-          </p>
-          <div className="bg-gray-800 rounded-lg p-3 mb-3 overflow-hidden">
-            <code className="text-purple-400 text-sm break-all block">{resultsLink}</code>
-          </div>
-          <div className="flex gap-2">
-            <button
-              onClick={handleCopyResults}
-              className="flex-1 py-3 rounded-xl bg-gray-700 text-white hover:bg-gray-600 active:scale-95 transition-all"
-            >
-              {copied ? '✓ Nukopijuota!' : '📋 Kopijuoti'}
-            </button>
-            {onShareResults && (
-              <button
-                onClick={onShareResults}
-                className="flex-1 py-3 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 text-white hover:scale-105 active:scale-95 transition-all"
-              >
-                📤 Dalintis
-              </button>
-            )}
           </div>
         </div>
       )}

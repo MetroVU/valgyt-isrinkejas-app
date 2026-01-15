@@ -26,7 +26,7 @@ export interface SessionData {
   result: {
     matches: string[];
     winner: string | null;
-    method: 'match' | 'random' | 'wheel' | null;
+    method: 'match' | 'random' | 'wheel' | 'choice' | null;
   } | null;
 }
 
