@@ -140,6 +140,9 @@ export default function Home() {
   const handleSubmit = () => {
     if (!session || !currentPerson) return;
 
+    // Get the latest session from storage (in case the other person submitted)
+    const latestSession = getSessionByDate(selectedDate) || session;
+
     const selection: Selection = {
       oderId: `${currentPerson}-${Date.now()}`,
       date: selectedDate,
@@ -150,7 +153,7 @@ export default function Home() {
     };
 
     const updatedSession: SessionData = {
-      ...session,
+      ...latestSession,
       [currentPerson]: selection,
     };
 
@@ -719,20 +722,45 @@ export default function Home() {
             </p>
             <div className="bg-gray-800 rounded-xl p-4 max-w-md mx-auto">
               <p className="text-sm text-gray-400 mb-2">Pasidalink šia nuoroda:</p>
-              <code className="text-purple-400 break-all">{typeof window !== 'undefined' ? window.location.href : ''}</code>
+              <code className="text-purple-400 break-all text-sm">{typeof window !== 'undefined' ? window.location.href : ''}</code>
             </div>
-            <div className="flex justify-center gap-4">
+            <div className="flex flex-col sm:flex-row justify-center gap-3">
+              <button
+                onClick={() => {
+                  const updatedSession = getSessionByDate(selectedDate);
+                  if (updatedSession) {
+                    setSession(updatedSession);
+                    if (updatedSession.person1?.submitted && updatedSession.person2?.submitted) {
+                      // Calculate matches if not already done
+                      if (!updatedSession.result) {
+                        const matches = findMatches(updatedSession);
+                        updatedSession.result = {
+                          matches,
+                          winner: matches.length === 1 ? matches[0] : null,
+                          method: matches.length === 1 ? 'match' : null,
+                        };
+                        saveSession(updatedSession);
+                        setSession(updatedSession);
+                      }
+                      setStep('results');
+                    }
+                  }
+                }}
+                className="px-6 py-3 rounded-xl bg-green-600 text-white hover:bg-green-500 active:scale-95 transition-all"
+              >
+                🔄 Patikrinti dabar
+              </button>
               <button
                 onClick={handleEditChoices}
-                className="px-6 py-3 rounded-xl bg-purple-600 text-white hover:bg-purple-500 transition-all"
+                className="px-6 py-3 rounded-xl bg-purple-600 text-white hover:bg-purple-500 active:scale-95 transition-all"
               >
-                ✏️ Redaguoti pasirinkimus
+                ✏️ Redaguoti
               </button>
               <button
                 onClick={handleReset}
-                className="px-6 py-3 rounded-xl bg-gray-700 text-white hover:bg-gray-600 transition-all"
+                className="px-6 py-3 rounded-xl bg-gray-700 text-white hover:bg-gray-600 active:scale-95 transition-all"
               >
-                Pradėti iš naujo
+                🔁 Iš naujo
               </button>
             </div>
           </div>
