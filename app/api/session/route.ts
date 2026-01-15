@@ -146,14 +146,7 @@ export async function POST(request: NextRequest) {
         ];
       }
 
-      // Delete old blob and create new one
-      if (oldBlobUrl) {
-        try {
-          await del(oldBlobUrl);
-        } catch (e) {
-          console.log('Delete failed, continuing anyway');
-        }
-      }
+      // Overwrite existing blob atomically (no delete to avoid eventual consistency issues)
 
       const blob = await put(`sessions/${code}.json`, JSON.stringify(session), {
         access: 'public',

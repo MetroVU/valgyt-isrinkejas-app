@@ -262,8 +262,57 @@ export default function Home() {
       
       if (data.success) {
         saveLocal(sessionCode, myRole!, selectedRestaurants);
-        // Poll immediately to check if both done
-        await pollSession(sessionCode, myRole);
+        // Immediately use returned session to drive UI to avoid waiting for polling
+        const sess: BlobSession = data.session;
+        setBlobSession(sess);
+
+        // Bring over custom restaurants to local if present
+        if (sess.customRestaurants && sess.customRestaurants.length > 0) {
+          addCustomRestaurantsFromShared(sess.customRestaurants);
+          setAllRestaurants(getAllRestaurants());
+        }
+
+        // If both submitted, compute results and show results
+        if (sess.person1 && sess.person2) {
+          const resultsSession: SessionData = {
+            id: `session-${sessionCode}`,
+            date: new Date().toISOString().split('T')[0],
+            person1: {
+              oderId: 'person1',
+              date: new Date().toISOString().split('T')[0],
+              person: 'person1',
+              restaurants: sess.person1.selections,
+              orders: {},
+              submitted: true,
+            },
+            person2: {
+              oderId: 'person2',
+              date: new Date().toISOString().split('T')[0],
+              person: 'person2',
+              restaurants: sess.person2.selections,
+              orders: {},
+              submitted: true,
+            },
+            result: null,
+          };
+
+          const matches = findMatches(resultsSession);
+          resultsSession.result = {
+            matches,
+            winner: matches.length === 1 ? matches[0] : null,
+            method: matches.length === 1 ? 'match' : null,
+          };
+
+          setSession(resultsSession);
+          setStep('results');
+        } else {
+          // Otherwise, move to waiting state immediately for current role
+          if (myRole === 'person1' || myRole === 'person2') {
+            setStep('waiting');
+          }
+          // Still kick off a poll to sync partner state
+          await pollSession(sessionCode, myRole);
+        }
       } else {
         setError(data.error || 'Nepavyko išsaugoti');
       }
