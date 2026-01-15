@@ -313,19 +313,17 @@ export default function Home() {
 
   const handleSpinWheel = () => {
     if (!session?.result?.matches) return;
-    const restaurantNames = session.result.matches
-      .map(id => getRestaurantById(id)?.name)
-      .filter(Boolean) as string[];
-    setWheelOptions(restaurantNames);
+    // Use restaurant IDs for the wheel options; SpinWheel resolves names
+    setWheelOptions(session.result.matches);
     setShowWheel(true);
   };
 
   const handleWheelResult = (winner: string) => {
-    const restaurant = allRestaurants.find(r => r.name === winner);
-    if (restaurant && session) {
+    // Winner is a restaurant ID
+    if (session) {
       setSession(prev => prev ? {
         ...prev,
-        result: { ...prev.result!, winner: restaurant.id, method: 'wheel' }
+        result: { ...prev.result!, winner, method: 'wheel' }
       } : null);
     }
     setShowWheel(false);
