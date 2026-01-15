@@ -251,7 +251,7 @@ export default function Home() {
         body: JSON.stringify({
           action: 'submit',
           code: sessionCode,
-          person: myRole === 'person1' ? 1 : 2,
+          role: myRole,
           selections: selectedRestaurants,
           customRestaurants: customRests,
         }),

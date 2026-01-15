@@ -2,12 +2,18 @@ import { NextRequest, NextResponse } from 'next/server';
 import { put, del } from '@vercel/blob';
 
 // Session data structure
+interface PersonSelection {
+  selections: string[];
+  submittedAt: number;
+}
+
 interface Session {
   code: string;
-  person1?: string[];
-  person2?: string[];
+  person1?: PersonSelection;
+  person2?: PersonSelection;
   createdAt: number;
   blobUrl?: string;
+  customRestaurants?: unknown[];
 }
 
 // Generate a random 6-character code
@@ -26,7 +32,7 @@ const urlMap = new Map<string, string>();
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action, code, selections, role } = body;
+    const { action, code, selections, role, customRestaurants } = body;
 
     console.log('API called with action:', action, 'code:', code);
 
@@ -121,9 +127,23 @@ export async function POST(request: NextRequest) {
 
       // Update session with selections
       if (role === 'person1') {
-        session.person1 = selections;
+        session.person1 = {
+          selections: selections,
+          submittedAt: Date.now(),
+        };
       } else {
-        session.person2 = selections;
+        session.person2 = {
+          selections: selections,
+          submittedAt: Date.now(),
+        };
+      }
+
+      // Add custom restaurants if provided
+      if (customRestaurants && customRestaurants.length > 0) {
+        session.customRestaurants = [
+          ...(session.customRestaurants || []),
+          ...customRestaurants,
+        ];
       }
 
       // Delete old blob and create new one
