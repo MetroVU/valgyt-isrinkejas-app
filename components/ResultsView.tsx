@@ -206,7 +206,7 @@ export default function ResultsView({ session, onPickRandom, onSpinWheel, onPick
             >
               <div className="text-3xl mb-2">🎲</div>
               <div className="font-bold">Atsitiktinis</div>
-              <div className="text-sm opacity-80">Iš visų 6 pasirinkimų</div>
+              <div className="text-sm opacity-80">Iš sutapimų arba iš 6 pasirinkimų</div>
             </button>
 
             {/* Spin wheel */}

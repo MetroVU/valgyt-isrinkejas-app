@@ -21,6 +21,7 @@ export default function SpinWheel({ options, onResult, onClose }: SpinWheelProps
   ];
 
   const restaurants = options.map(id => getRestaurantById(id)).filter(Boolean);
+  const hasOptions = restaurants.length > 0;
 
   useEffect(() => {
     drawWheel();
@@ -32,6 +33,12 @@ export default function SpinWheel({ options, onResult, onClose }: SpinWheelProps
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+
+    if (!hasOptions) {
+      // Clear canvas and skip drawing when there are no options
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      return;
+    }
 
     const centerX = canvas.width / 2;
     const centerY = canvas.height / 2;
@@ -88,6 +95,7 @@ export default function SpinWheel({ options, onResult, onClose }: SpinWheelProps
 
   const spin = () => {
     if (spinning) return;
+    if (!hasOptions || options.length === 0) return;
 
     setSpinning(true);
     setWinner(null);
@@ -167,6 +175,12 @@ export default function SpinWheel({ options, onResult, onClose }: SpinWheelProps
           />
         </div>
 
+        {!hasOptions && (
+          <div className="text-center text-sm text-gray-400 mb-4">
+            Nėra pasirinkimų ratui. Pirmiausia pasirinkite restoranus.
+          </div>
+        )}
+
         {/* Winner announcement */}
         {winner && winnerRestaurant && (
           <div className="text-center bg-gradient-to-r from-yellow-500/20 to-orange-500/20 rounded-xl p-4 mb-4">
@@ -180,9 +194,9 @@ export default function SpinWheel({ options, onResult, onClose }: SpinWheelProps
           {!winner ? (
             <button
               onClick={spin}
-              disabled={spinning}
+              disabled={spinning || !hasOptions}
               className={`flex-1 py-4 rounded-xl text-lg font-bold transition-all active:scale-95 ${
-                spinning
+                spinning || !hasOptions
                   ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
                   : 'bg-gradient-to-r from-purple-500 to-pink-500 text-white hover:scale-105'
               }`}

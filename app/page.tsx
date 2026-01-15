@@ -352,8 +352,12 @@ export default function Home() {
 
   // Results handlers
   const handlePickRandom = () => {
-    if (!session?.result?.matches) return;
-    const winner = session.result.matches[Math.floor(Math.random() * session.result.matches.length)];
+    const matches = session?.result?.matches ?? [];
+    const p1 = session?.person1?.restaurants ?? [];
+    const p2 = session?.person2?.restaurants ?? [];
+    const pool = matches.length > 0 ? matches : Array.from(new Set([...p1, ...p2]));
+    if (pool.length === 0) return;
+    const winner = pool[Math.floor(Math.random() * pool.length)];
     setSession(prev => prev ? {
       ...prev,
       result: { ...prev.result!, winner, method: 'random' }
@@ -361,9 +365,13 @@ export default function Home() {
   };
 
   const handleSpinWheel = () => {
-    if (!session?.result?.matches) return;
+    const matches = session?.result?.matches ?? [];
+    const p1 = session?.person1?.restaurants ?? [];
+    const p2 = session?.person2?.restaurants ?? [];
+    const pool = matches.length > 0 ? matches : Array.from(new Set([...p1, ...p2]));
+    if (pool.length === 0) return;
     // Use restaurant IDs for the wheel options; SpinWheel resolves names
-    setWheelOptions(session.result.matches);
+    setWheelOptions(pool);
     setShowWheel(true);
   };
 
