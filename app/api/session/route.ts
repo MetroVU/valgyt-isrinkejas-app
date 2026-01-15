@@ -23,22 +23,34 @@ const useBlobStorage = () => {
 // Blob storage functions (only used if configured)
 async function blobPut(key: string, data: any) {
   const { put } = await import('@vercel/blob');
-  await put(key, JSON.stringify(data), {
+  const result = await put(key, JSON.stringify(data), {
     access: 'public',
     addRandomSuffix: false,
   });
+  console.log('Blob put result:', result.url);
+  return result;
 }
 
 async function blobGet(key: string) {
-  const { list } = await import('@vercel/blob');
-  const { blobs } = await list({ prefix: key });
-  
-  if (blobs.length === 0) return null;
-  
-  const response = await fetch(blobs[0].url, { cache: 'no-store' });
-  if (!response.ok) return null;
-  
-  return response.json();
+  try {
+    const { list } = await import('@vercel/blob');
+    const { blobs } = await list({ prefix: key });
+    
+    console.log('Blob list result for', key, ':', blobs.length, 'blobs found');
+    
+    if (blobs.length === 0) return null;
+    
+    const response = await fetch(blobs[0].url, { cache: 'no-store' });
+    if (!response.ok) {
+      console.log('Blob fetch failed:', response.status);
+      return null;
+    }
+    
+    return response.json();
+  } catch (error) {
+    console.error('blobGet error:', error);
+    return null;
+  }
 }
 
 async function blobDelete(key: string) {
@@ -55,6 +67,8 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { action, code, person, selections, customRestaurants } = body;
     const useBlob = useBlobStorage();
+    
+    console.log('API called:', { action, code, person, useBlob });
 
     if (action === 'create') {
       const sessionCode = generateCode();
@@ -67,9 +81,16 @@ export async function POST(request: NextRequest) {
       };
 
       if (useBlob) {
-        await blobPut(`sessions/${sessionCode}.json`, sessionData);
+        try {
+          await blobPut(`sessions/${sessionCode}.json`, sessionData);
+          console.log('Session created in blob:', sessionCode);
+        } catch (blobError) {
+          console.error('Blob put error:', blobError);
+          throw blobError;
+        }
       } else {
         sessions.set(sessionCode, sessionData);
+        console.log('Session created in memory:', sessionCode);
       }
 
       return NextResponse.json({ success: true, code: sessionCode });
@@ -98,13 +119,23 @@ export async function POST(request: NextRequest) {
     if (action === 'submit') {
       let sessionData = null;
       
+      console.log('Submit action for code:', code, 'person:', person);
+      
       if (useBlob) {
-        sessionData = await blobGet(`sessions/${code}.json`);
+        try {
+          sessionData = await blobGet(`sessions/${code}.json`);
+          console.log('Got session from blob:', sessionData ? 'found' : 'not found');
+        } catch (getError) {
+          console.error('Blob get error:', getError);
+          return NextResponse.json({ success: false, error: 'Failed to get session' });
+        }
       } else {
         sessionData = sessions.get(code);
+        console.log('Got session from memory:', sessionData ? 'found' : 'not found');
       }
       
       if (!sessionData) {
+        console.log('Session not found for code:', code);
         return NextResponse.json({ success: false, error: 'Session not found' });
       }
 
@@ -139,9 +170,16 @@ export async function POST(request: NextRequest) {
 
       // Save updated session
       if (useBlob) {
-        await blobPut(`sessions/${code}.json`, sessionData);
+        try {
+          await blobPut(`sessions/${code}.json`, sessionData);
+          console.log('Session saved to blob');
+        } catch (putError) {
+          console.error('Blob put error on submit:', putError);
+          return NextResponse.json({ success: false, error: 'Failed to save session' });
+        }
       } else {
         sessions.set(code, sessionData);
+        console.log('Session saved to memory');
       }
 
       return NextResponse.json({ success: true });

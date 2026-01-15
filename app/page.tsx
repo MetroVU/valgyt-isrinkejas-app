@@ -258,14 +258,17 @@ export default function Home() {
       });
       const data = await res.json();
       
+      console.log('Submit response:', data);
+      
       if (data.success) {
         saveLocal(sessionCode, myRole!, selectedRestaurants);
         // Poll immediately to check if both done
         await pollSession(sessionCode, myRole);
       } else {
-        setError('Nepavyko išsaugoti');
+        setError(data.error || 'Nepavyko išsaugoti');
       }
-    } catch {
+    } catch (err) {
+      console.error('Submit error:', err);
       setError('Klaida siunčiant');
     }
     setIsLoading(false);
