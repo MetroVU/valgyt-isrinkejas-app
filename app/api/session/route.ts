@@ -109,7 +109,7 @@ export async function POST(request: NextRequest) {
       console.log('Submit list response:', JSON.stringify(listData));
 
       let session: Session;
-      let oldBlobUrl: string | undefined;
+      let oldBlobUrl: string = '';
 
       if (listData.blobs && listData.blobs.length > 0) {
         oldBlobUrl = listData.blobs[0].url;
