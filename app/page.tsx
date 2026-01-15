@@ -14,6 +14,21 @@ import AddRestaurantModal from '@/components/AddRestaurantModal';
 type Step = 'date' | 'person' | 'select' | 'orders' | 'waiting' | 'results';
 type SortOption = 'name' | 'rating' | 'price-low' | 'price-high';
 
+// Helper to encode/decode selections to URL-safe string
+const encodeSelections = (restaurants: string[], orders: { [key: string]: string }) => {
+  const data = { r: restaurants, o: orders };
+  return btoa(encodeURIComponent(JSON.stringify(data)));
+};
+
+const decodeSelections = (encoded: string): { restaurants: string[], orders: { [key: string]: string } } | null => {
+  try {
+    const data = JSON.parse(decodeURIComponent(atob(encoded)));
+    return { restaurants: data.r || [], orders: data.o || {} };
+  } catch {
+    return null;
+  }
+};
+
 export default function Home() {
   const [step, setStep] = useState<Step>('date');
   const [selectedDate, setSelectedDate] = useState<string>('');
@@ -30,6 +45,9 @@ export default function Home() {
   const [sortBy, setSortBy] = useState<SortOption>('name');
   const [cuisineFilter, setCuisineFilter] = useState<string>('all');
   const [showFilters, setShowFilters] = useState(false);
+  const [shareableLink, setShareableLink] = useState<string>('');
+  const [person1FromUrl, setPerson1FromUrl] = useState<{ restaurants: string[], orders: { [key: string]: string } } | null>(null);
+  const [copied, setCopied] = useState(false);
 
   // Get unique cuisines
   const cuisines = useMemo(() => getAllCuisines(), [allRestaurants]);
@@ -39,9 +57,45 @@ export default function Home() {
     setAllRestaurants(getAllRestaurants());
   }, [showAddModal]); // Refresh when modal closes
 
-  // Load session when date changes
+  // Check URL parameters on load
   useEffect(() => {
-    if (selectedDate) {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const dateParam = params.get('d');
+      const person1Data = params.get('p1');
+      
+      if (dateParam && person1Data) {
+        // Person 2 is opening the link from Person 1
+        setSelectedDate(dateParam);
+        const decoded = decodeSelections(person1Data);
+        if (decoded) {
+          setPerson1FromUrl(decoded);
+          // Create session with person1's data already filled
+          const newSession: SessionData = {
+            id: `session-${dateParam}`,
+            date: dateParam,
+            person1: {
+              oderId: `person1-url`,
+              date: dateParam,
+              person: 'person1',
+              restaurants: decoded.restaurants,
+              orders: decoded.orders,
+              submitted: true,
+            },
+            person2: null,
+            result: null,
+          };
+          setSession(newSession);
+          setCurrentPerson('person2');
+          setStep('select');
+        }
+      }
+    }
+  }, []);
+
+  // Load session when date changes (only if not loaded from URL)
+  useEffect(() => {
+    if (selectedDate && !person1FromUrl) {
       const existingSession = getSessionByDate(selectedDate);
       if (existingSession) {
         setSession(existingSession);
@@ -50,24 +104,10 @@ export default function Home() {
         setSession(newSession);
       }
     }
-  }, [selectedDate]);
+  }, [selectedDate, person1FromUrl]);
 
-  // Check if both people have submitted
-  useEffect(() => {
-    if (session && step === 'waiting') {
-      const checkInterval = setInterval(() => {
-        const updatedSession = getSessionByDate(selectedDate);
-        if (updatedSession) {
-          setSession(updatedSession);
-          if (updatedSession.person1?.submitted && updatedSession.person2?.submitted) {
-            setStep('results');
-          }
-        }
-      }, 1000);
-
-      return () => clearInterval(checkInterval);
-    }
-  }, [session, step, selectedDate]);
+  // No need for polling anymore - we use URL sharing instead
+  // The "waiting" step will show the shareable link
 
   const handleDateSelect = (date: string) => {
     setSelectedDate(date);
@@ -76,6 +116,12 @@ export default function Home() {
 
   const handlePersonSelect = (person: 'person1' | 'person2', forceEdit: boolean = false) => {
     setCurrentPerson(person);
+    
+    // If person2 came from URL, skip to select
+    if (person === 'person2' && person1FromUrl) {
+      setStep('select');
+      return;
+    }
     
     // Check if this person already submitted
     if (session) {
@@ -138,10 +184,7 @@ export default function Home() {
   };
 
   const handleSubmit = () => {
-    if (!session || !currentPerson) return;
-
-    // Get the latest session from storage (in case the other person submitted)
-    const latestSession = getSessionByDate(selectedDate) || session;
+    if (!currentPerson) return;
 
     const selection: Selection = {
       oderId: `${currentPerson}-${Date.now()}`,
@@ -152,29 +195,74 @@ export default function Home() {
       submitted: true,
     };
 
-    const updatedSession: SessionData = {
-      ...latestSession,
-      [currentPerson]: selection,
-    };
-
-    // Check if both have now submitted
-    const otherPerson = currentPerson === 'person1' ? 'person2' : 'person1';
-    if (updatedSession[otherPerson]?.submitted) {
+    if (currentPerson === 'person1') {
+      // Person 1 submitting - generate shareable link
+      const encoded = encodeSelections(selectedRestaurants, orders);
+      const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
+      const link = `${baseUrl}?d=${selectedDate}&p1=${encoded}`;
+      setShareableLink(link);
+      
+      // Save locally too
+      const updatedSession: SessionData = {
+        ...session!,
+        person1: selection,
+      };
+      saveSession(updatedSession);
+      setSession(updatedSession);
+      setStep('waiting');
+    } else {
+      // Person 2 submitting - calculate results immediately
+      const updatedSession: SessionData = {
+        ...session!,
+        person2: selection,
+      };
+      
       const matches = findMatches(updatedSession);
       updatedSession.result = {
         matches,
         winner: matches.length === 1 ? matches[0] : null,
         method: matches.length === 1 ? 'match' : null,
       };
-    }
-
-    saveSession(updatedSession);
-    setSession(updatedSession);
-
-    if (updatedSession.result) {
+      
+      saveSession(updatedSession);
+      setSession(updatedSession);
       setStep('results');
+    }
+  };
+
+  const handleCopyLink = async () => {
+    if (shareableLink) {
+      try {
+        await navigator.clipboard.writeText(shareableLink);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch {
+        // Fallback for older browsers
+        const textArea = document.createElement('textarea');
+        textArea.value = shareableLink;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }
+    }
+  };
+
+  const handleShareLink = async () => {
+    if (shareableLink && navigator.share) {
+      try {
+        await navigator.share({
+          title: 'Kur Valgom? 🍕',
+          text: 'Pasirink kur valgysim kartu!',
+          url: shareableLink,
+        });
+      } catch {
+        // User cancelled or share failed
+      }
     } else {
-      setStep('waiting');
+      handleCopyLink();
     }
   };
 
@@ -379,6 +467,15 @@ export default function Home() {
 
         {step === 'select' && (
           <div className="space-y-4 md:space-y-6">
+            {/* Info banner when person2 is selecting from URL */}
+            {currentPerson === 'person2' && person1FromUrl && (
+              <div className="bg-gradient-to-r from-blue-600/20 to-indigo-600/20 border border-blue-500/30 rounded-xl p-4 text-center">
+                <p className="text-blue-300">
+                  👨 Jis jau pasirinko savo 3 vietas! Dabar tavo eilė pasirinkti.
+                </p>
+              </div>
+            )}
+            
             {/* Sticky header on mobile */}
             <div className="sticky-header py-4 -mx-4 px-4 md:static md:py-0 md:mx-0 md:px-0 md:bg-transparent">
               <div className="text-center">
@@ -712,55 +809,70 @@ export default function Home() {
         )}
 
         {step === 'waiting' && (
-          <div className="text-center space-y-6">
-            <div className="text-6xl animate-bounce-slow">⏳</div>
-            <h2 className="text-2xl font-bold">Laukiame kito žmogaus...</h2>
+          <div className="text-center space-y-6 max-w-md mx-auto">
+            <div className="text-6xl">📤</div>
+            <h2 className="text-2xl font-bold">Tavo pasirinkimai išsaugoti!</h2>
             <p className="text-gray-400">
-              {currentPerson === 'person1' 
-                ? 'Ji dar nepasirinko. Pasidalink nuoroda!'
-                : 'Jis dar nepasirinko. Pasidalink nuoroda!'}
+              Dabar pasidalink nuoroda su savo antrąja puse, kad ji galėtų pasirinkti.
             </p>
-            <div className="bg-gray-800 rounded-xl p-4 max-w-md mx-auto">
-              <p className="text-sm text-gray-400 mb-2">Pasidalink šia nuoroda:</p>
-              <code className="text-purple-400 break-all text-sm">{typeof window !== 'undefined' ? window.location.href : ''}</code>
+            
+            {/* Selected restaurants preview */}
+            <div className="bg-gray-800/50 rounded-xl p-4">
+              <p className="text-sm text-gray-400 mb-3">Tu pasirinkai:</p>
+              <div className="flex flex-wrap justify-center gap-2">
+                {selectedRestaurants.map(id => {
+                  const r = getRestaurantById(id);
+                  return r ? (
+                    <span key={id} className="px-3 py-1.5 bg-purple-600/50 rounded-full text-sm flex items-center gap-1">
+                      {r.image} {r.name}
+                    </span>
+                  ) : null;
+                })}
+              </div>
             </div>
-            <div className="flex flex-col sm:flex-row justify-center gap-3">
-              <button
-                onClick={() => {
-                  const updatedSession = getSessionByDate(selectedDate);
-                  if (updatedSession) {
-                    setSession(updatedSession);
-                    if (updatedSession.person1?.submitted && updatedSession.person2?.submitted) {
-                      // Calculate matches if not already done
-                      if (!updatedSession.result) {
-                        const matches = findMatches(updatedSession);
-                        updatedSession.result = {
-                          matches,
-                          winner: matches.length === 1 ? matches[0] : null,
-                          method: matches.length === 1 ? 'match' : null,
-                        };
-                        saveSession(updatedSession);
-                        setSession(updatedSession);
-                      }
-                      setStep('results');
-                    }
-                  }
-                }}
-                className="px-6 py-3 rounded-xl bg-green-600 text-white hover:bg-green-500 active:scale-95 transition-all"
-              >
-                🔄 Patikrinti dabar
-              </button>
+
+            {/* Shareable link */}
+            <div className="bg-gray-800 rounded-xl p-4 space-y-3">
+              <p className="text-sm text-gray-400">Pasidalink šia nuoroda:</p>
+              <div className="bg-gray-900 rounded-lg p-3 break-all text-sm text-purple-400 font-mono">
+                {shareableLink || 'Generuojama...'}
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleCopyLink}
+                  className={`flex-1 py-3 rounded-xl font-bold transition-all active:scale-95 ${
+                    copied 
+                      ? 'bg-green-500 text-white' 
+                      : 'bg-gray-700 text-white hover:bg-gray-600'
+                  }`}
+                >
+                  {copied ? '✓ Nukopijuota!' : '📋 Kopijuoti'}
+                </button>
+                <button
+                  onClick={handleShareLink}
+                  className="flex-1 py-3 rounded-xl bg-gradient-to-r from-pink-500 to-purple-500 text-white font-bold hover:scale-105 active:scale-95 transition-all"
+                >
+                  📤 Dalintis
+                </button>
+              </div>
+            </div>
+
+            <div className="text-sm text-gray-500">
+              Kai antroji pusė pasirinko, rezultatai bus rodomi jų telefone.
+            </div>
+
+            <div className="flex flex-col gap-3 pt-4">
               <button
                 onClick={handleEditChoices}
                 className="px-6 py-3 rounded-xl bg-purple-600 text-white hover:bg-purple-500 active:scale-95 transition-all"
               >
-                ✏️ Redaguoti
+                ✏️ Redaguoti pasirinkimus
               </button>
               <button
                 onClick={handleReset}
                 className="px-6 py-3 rounded-xl bg-gray-700 text-white hover:bg-gray-600 active:scale-95 transition-all"
               >
-                🔁 Iš naujo
+                🔁 Pradėti iš naujo
               </button>
             </div>
           </div>
