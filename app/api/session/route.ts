@@ -14,6 +14,11 @@ interface Session {
   createdAt: number;
   blobUrl?: string;
   customRestaurants?: unknown[];
+  result?: {
+    winner: string;
+    method: 'random' | 'wheel' | 'match';
+    decidedAt: number;
+  };
 }
 
 // Generate a random 6-character code
@@ -188,6 +193,50 @@ export async function POST(request: NextRequest) {
 
       if (!listResponse.ok) {
         return NextResponse.json({ success: false, error: 'Sesija nerasta' });
+      }
+
+      if (action === 'decide') {
+        if (!process.env.BLOB_READ_WRITE_TOKEN) {
+          return NextResponse.json({ success: false, error: 'Missing BLOB_READ_WRITE_TOKEN in environment' }, { status: 500 });
+        }
+
+        const { winner, method } = body as { winner: string; method: 'random' | 'wheel' | 'match' };
+        // Fetch current session
+        const listResponse = await fetch(
+          `https://blob.vercel-storage.com?prefix=sessions/${code}.json`,
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.BLOB_READ_WRITE_TOKEN}`,
+            },
+          }
+        );
+
+        if (!listResponse.ok) {
+          return NextResponse.json({ success: false, error: 'Session not found' }, { status: 404 });
+        }
+
+        const listData = await listResponse.json();
+        if (!listData.blobs || listData.blobs.length === 0) {
+          return NextResponse.json({ success: false, error: 'Session not found' }, { status: 404 });
+        }
+
+        const blobUrl = listData.blobs[0].url;
+        const sessionRes = await fetch(blobUrl);
+        const current: Session = await sessionRes.json();
+
+        const updated: Session = {
+          ...current,
+          result: { winner, method, decidedAt: Date.now() },
+        };
+
+        const blob = await put(`sessions/${code}.json`, JSON.stringify(updated), {
+          access: 'public',
+          contentType: 'application/json',
+          addRandomSuffix: false,
+          allowOverwrite: true,
+        });
+
+        return NextResponse.json({ success: true, session: updated, blobUrl: blob.url });
       }
 
       const listData = await listResponse.json();

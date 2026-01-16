@@ -118,10 +118,12 @@ export default function Home() {
           };
           
           const matches = findMatches(resultsSession);
+          const decidedWinner = (sess as any).result?.winner || null;
+          const decidedMethod = (sess as any).result?.method || null;
           resultsSession.result = {
             matches,
-            winner: matches.length === 1 ? matches[0] : null,
-            method: matches.length === 1 ? 'match' : null,
+            winner: decidedWinner ?? (matches.length === 1 ? matches[0] : null),
+            method: decidedMethod ?? (matches.length === 1 ? 'match' : null),
           };
           
           setSession(resultsSession);
@@ -362,6 +364,13 @@ export default function Home() {
       ...prev,
       result: { ...prev.result!, winner, method: 'random' }
     } : null);
+    if (sessionCode) {
+      fetch('/api/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'decide', code: sessionCode, winner, method: 'random' }),
+      }).catch(() => {});
+    }
   };
 
   const handleSpinWheel = () => {
@@ -384,6 +393,13 @@ export default function Home() {
       } : null);
     }
     setShowWheel(false);
+    if (sessionCode) {
+      fetch('/api/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'decide', code: sessionCode, winner, method: 'wheel' }),
+      }).catch(() => {});
+    }
   };
 
   const handlePickFromMatches = () => {
@@ -393,6 +409,13 @@ export default function Home() {
       ...prev,
       result: { ...prev.result!, winner, method: 'match' }
     } : null);
+    if (sessionCode) {
+      fetch('/api/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'decide', code: sessionCode, winner, method: 'match' }),
+      }).catch(() => {});
+    }
   };
 
   // Reset everything
