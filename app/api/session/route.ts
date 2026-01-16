@@ -37,6 +37,9 @@ export async function POST(request: NextRequest) {
     console.log('API called with action:', action, 'code:', code);
 
     if (action === 'create') {
+      if (!process.env.BLOB_READ_WRITE_TOKEN) {
+        return NextResponse.json({ success: false, error: 'Missing BLOB_READ_WRITE_TOKEN in environment' }, { status: 500 });
+      }
       // Create new session
       const newCode = generateCode();
       const session: Session = {
@@ -61,6 +64,9 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === 'join') {
+      if (!process.env.BLOB_READ_WRITE_TOKEN) {
+        return NextResponse.json({ success: false, error: 'Missing BLOB_READ_WRITE_TOKEN in environment' }, { status: 500 });
+      }
       // Try to find the session by listing blobs
       const response = await fetch(
         `https://blob.vercel-storage.com?prefix=sessions/${code}.json`,
@@ -96,6 +102,9 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === 'submit') {
+      if (!process.env.BLOB_READ_WRITE_TOKEN) {
+        return NextResponse.json({ success: false, error: 'Missing BLOB_READ_WRITE_TOKEN in environment' }, { status: 500 });
+      }
       // First, get the current session
       const listResponse = await fetch(
         `https://blob.vercel-storage.com?prefix=sessions/${code}.json`,
@@ -165,6 +174,9 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === 'get') {
+      if (!process.env.BLOB_READ_WRITE_TOKEN) {
+        return NextResponse.json({ success: false, error: 'Missing BLOB_READ_WRITE_TOKEN in environment' }, { status: 500 });
+      }
       const listResponse = await fetch(
         `https://blob.vercel-storage.com?prefix=sessions/${code}.json`,
         {

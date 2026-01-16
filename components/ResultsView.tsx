@@ -25,6 +25,9 @@ export default function ResultsView({ session, onPickRandom, onSpinWheel, onPick
       return () => clearTimeout(timer);
     }
   }, [winner]);
+      const p1 = session.person1?.restaurants || [];
+      const p2 = session.person2?.restaurants || [];
+      const pool = matches.length > 0 ? matches : Array.from(new Set([...p1, ...p2]));
 
   const person1Restaurants: (Restaurant | undefined)[] = session.person1?.restaurants.map((id: string) => getRestaurantById(id)) || [];
   const person2Restaurants: (Restaurant | undefined)[] = session.person2?.restaurants.map((id: string) => getRestaurantById(id)) || [];

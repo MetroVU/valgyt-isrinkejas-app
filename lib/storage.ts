@@ -1,4 +1,4 @@
-import { SessionData } from './data';
+import { SessionData } from '@/lib/data';
 
 const STORAGE_KEY = 'food-picker-sessions';
 
@@ -55,5 +55,8 @@ export function findMatches(session: SessionData): string[] {
 }
 
 export function pickRandom(options: string[]): string {
+  if (!options || options.length === 0) {
+    throw new Error('No options provided for random pick');
+  }
   return options[Math.floor(Math.random() * options.length)];
 }
