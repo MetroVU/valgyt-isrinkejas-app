@@ -125,6 +125,12 @@ export default function Home() {
             winner: decidedWinner ?? (matches.length === 1 ? matches[0] : null),
             method: decidedMethod ?? (matches.length === 1 ? 'match' : null),
           };
+          if (decidedWinner && decidedMethod) {
+            try {
+              const { recordDecision } = require('@/lib/history');
+              recordDecision(decidedWinner, decidedMethod);
+            } catch {}
+          }
           
           setSession(resultsSession);
           setStep('results');
@@ -364,6 +370,10 @@ export default function Home() {
       ...prev,
       result: { ...prev.result!, winner, method: 'random' }
     } : null);
+    try {
+      const { recordDecision } = require('@/lib/history');
+      recordDecision(winner, 'random');
+    } catch {}
     if (sessionCode) {
       fetch('/api/session', {
         method: 'POST',
@@ -392,12 +402,35 @@ export default function Home() {
         result: { ...prev.result!, winner, method: 'wheel' }
       } : null);
     }
+    try {
+      const { recordDecision } = require('@/lib/history');
+      recordDecision(winner, 'wheel');
+    } catch {}
     setShowWheel(false);
     if (sessionCode) {
       fetch('/api/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'decide', code: sessionCode, winner, method: 'wheel' }),
+      }).catch(() => {});
+    }
+  };
+  const handleChooseSuggestion = (id: string) => {
+    if (session) {
+      setSession(prev => prev ? {
+        ...prev,
+        result: { ...prev.result!, winner: id, method: 'choice' }
+      } : null);
+    }
+    try {
+      const { recordDecision } = require('@/lib/history');
+      recordDecision(id, 'choice');
+    } catch {}
+    if (sessionCode) {
+      fetch('/api/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'decide', code: sessionCode, winner: id, method: 'suggest' }),
       }).catch(() => {});
     }
   };
@@ -409,6 +442,10 @@ export default function Home() {
       ...prev,
       result: { ...prev.result!, winner, method: 'match' }
     } : null);
+    try {
+      const { recordDecision } = require('@/lib/history');
+      recordDecision(winner, 'match');
+    } catch {}
     if (sessionCode) {
       fetch('/api/session', {
         method: 'POST',
@@ -757,6 +794,7 @@ export default function Home() {
               onSpinWheel={handleSpinWheel}
               onPickFromMatches={handlePickFromMatches}
               onReset={handleReset}
+              onChooseSuggestion={handleChooseSuggestion}
             />
             {showWheel && (
               <SpinWheel

@@ -16,7 +16,7 @@ interface Session {
   customRestaurants?: unknown[];
   result?: {
     winner: string;
-    method: 'random' | 'wheel' | 'match';
+    method: 'random' | 'wheel' | 'match' | 'suggest';
     decidedAt: number;
   };
 }
@@ -200,7 +200,7 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ success: false, error: 'Missing BLOB_READ_WRITE_TOKEN in environment' }, { status: 500 });
         }
 
-        const { winner, method } = body as { winner: string; method: 'random' | 'wheel' | 'match' };
+        const { winner, method } = body as { winner: string; method: 'random' | 'wheel' | 'match' | 'suggest' };
         // Fetch current session
         const listResponse = await fetch(
           `https://blob.vercel-storage.com?prefix=sessions/${code}.json`,
